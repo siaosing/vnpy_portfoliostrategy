@@ -363,7 +363,7 @@ class StrategyEngine(BaseEngine):
 
         # Add vt_symbol to strategy map.
         for vt_symbol in strategy.vt_symbols:
-            strategies = self.symbol_strategy_map[vt_symbol]
+            strategies: list = self.symbol_strategy_map[vt_symbol]
             strategies.append(strategy)
 
         self.save_strategy_setting()
