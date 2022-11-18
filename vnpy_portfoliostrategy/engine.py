@@ -1,5 +1,6 @@
 import importlib
 import glob
+import os
 import traceback
 from collections import defaultdict
 from pathlib import Path
@@ -20,6 +21,7 @@ from vnpy.trader.object import (
     OrderData,
     TradeData,
     PositionData,
+    IOData,  # jxx add
     BarData,
     ContractData
 )
@@ -27,7 +29,8 @@ from vnpy.trader.event import (
     EVENT_TICK,
     EVENT_ORDER,
     EVENT_TRADE,
-    EVENT_POSITION
+    EVENT_POSITION,
+    EVENT_IO   # jxx add
 )
 from vnpy.trader.constant import (
     Direction,
@@ -89,12 +92,20 @@ class StrategyEngine(BaseEngine):
         """"""
         self.stop_all_strategies()
 
+    def on_event(self, type: str, data: Any = None) -> None:  # jxx add
+        """
+        General event push.
+        """
+        event: Event = Event(type, data)
+        self.event_engine.put(event)
+
     def register_event(self) -> None:
         """"""
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_ORDER, self.process_order_event)
         self.event_engine.register(EVENT_TRADE, self.process_trade_event)
         self.event_engine.register(EVENT_POSITION, self.process_position_event)
+        self.event_engine.register(EVENT_IO, self.process_io_event)
 
     def init_datafeed(self) -> None:
         """
@@ -166,6 +177,15 @@ class StrategyEngine(BaseEngine):
         position: PositionData = event.data
 
         self.offset_converter.update_position(position)
+
+    def process_io_event(self, event: Event):
+        io: IOData = event.data
+        filename = io.filename
+        content = io.content
+        if os.path.exists(filename):
+            content.to_csv(filename, index=False, mode='a', header=False, line_terminator='\n')
+        else:
+            content.to_csv(filename, index=False, mode='a', header=True, line_terminator='\n')
 
     def send_order(
         self,
