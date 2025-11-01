@@ -128,7 +128,6 @@ class StrategyEngine(BaseEngine):
         self.database: BaseDatabase = get_database()
         self.datafeed: BaseDatafeed = get_datafeed()
 
-
     def load_portfolio_data(self) -> None:
         """加载组合数据"""
         self.portfolio_data = load_json(self.portfolio_data_filename)
@@ -193,7 +192,6 @@ class StrategyEngine(BaseEngine):
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_ORDER, self.process_order_event)
         self.event_engine.register(EVENT_TRADE, self.process_trade_event)
-        #self.event_engine.register(EVENT_POSITION, self.process_position_event)
         self.event_engine.register(EVENT_IO, self.process_io_event)
 
         log_engine: LogEngine = self.main_engine.get_engine("log")
@@ -230,7 +228,6 @@ class StrategyEngine(BaseEngine):
             # self.write_log(f"process_trade_event: {trade}")
             self.update_trade(trade)
 
-
     def process_io_event(self, event: Event) -> None:
         io: IOData = event.data
         filename = io.filename
@@ -239,7 +236,6 @@ class StrategyEngine(BaseEngine):
             content.to_csv(filename, index=False, mode='a', header=False, lineterminator='\n')
         else:
             content.to_csv(filename, index=False, mode='a', header=True, lineterminator='\n')
-
 
     def on_tick(self, tick: TickData) -> None:
         # 检查是否有未成交单 若有需撤单重发
@@ -258,7 +254,6 @@ class StrategyEngine(BaseEngine):
         if diff_pos:
             self.execute_trade(vt_symbol, diff_pos, tick)
         self.target_data_diff[vt_symbol] = defaultdict(int)
-
 
     def execute_trade(self, vt_symbol: str, volume: int, tick: TickData) -> None:
         """
@@ -330,7 +325,6 @@ class StrategyEngine(BaseEngine):
 
         # 更新下单时间
         self.last_order_time[vt_symbol] = current_time
-
 
     def check_unfinished_order(self, tick: TickData) -> None:
         """ check untraded orders,cancel and chase"""
@@ -869,7 +863,6 @@ class StrategyEngine(BaseEngine):
         # self.sync_strategy_data()
         self.sync_portfolio_data()
         self.write_log(f"self.pos_data: {self.pos_data}")
-
 
     def update_order(self, order: OrderData) -> None:
         """
