@@ -23,7 +23,6 @@ from vnpy.trader.object import (
     TickData,
     OrderData,
     TradeData,
-    PositionData,
     IOData,
     BarData,
     ContractData
@@ -32,7 +31,6 @@ from vnpy.trader.event import (
     EVENT_TICK,
     EVENT_ORDER,
     EVENT_TRADE,
-    EVENT_POSITION,
     EVENT_IO
 )
 from vnpy.trader.constant import (
@@ -77,28 +75,9 @@ if not os.path.exists(trade_log_path):
         pass
 
 order_settings = load_json('order_settings.json')
-MAX_ORDER_VOLUME = order_settings['MAX_ORDER_VOLUME']
+MAX_ORDER_VOLUME = order_settings['MAX_ORDER_VOLUME']         # 单笔最大下单量 大品种最大下单量1手 其他品种最大下单量2手
 ORDER_INTERVAL = randint(2,order_settings['ORDER_INTERVAL'])  # 下单时间间隔 2-5秒 太短可能没有收到成交回报 没有及时更新self.pos_data
-# 单笔最大下单量
-# MAX_ORDER_VOLUME ={
-#     "IF":1,
-#     "IC":1,
-#     "IH":1,
-#     "IM":1,
-#     "TL":1,
-#     "AU":1,
-#     "SC":1,
-#     "CU":1,
-#     "BC":1,
-#     "SN":1,
-#     "LH":1,
-#     "J":1,
-#     "PB":1,
-#     "FG":1,
-#     "DEFAULT":2
-# }
-# # 下单时间间隔
-# ORDER_INTERVAL = 3
+
 
 class StrategyEngine(BaseEngine):
     """组合策略引擎
@@ -133,7 +112,7 @@ class StrategyEngine(BaseEngine):
         self.orders: dict[str, OrderData] = {}
         self.active_orderids: set[str] = set()
         self.to_be_cancelled_orders: dict[str, OrderData] = {}
-        self.last_order_time: dict[str, datetime] = defaultdict(datetime) # 记录每个合约上次下单时间
+        self.last_order_time: dict[str, datetime | None] = {}  # 记录每个合约上次下单时间
         self.pending_volumes: dict[str, int] = defaultdict(int) # 记录每个合约剩余需要下单的量
 
         self.init_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1)
@@ -202,7 +181,7 @@ class StrategyEngine(BaseEngine):
         data: list[BarData] = self.datafeed.query_bar_history(req, self.write_log)
         return data
 
-    def on_event(self, type: str, data: object = None) -> None:
+    def on_event(self, type: str, data: object | None = None) -> None:
         """
         General event push.
         """
@@ -278,7 +257,7 @@ class StrategyEngine(BaseEngine):
         diff_pos = round(sum(self.target_data_diff[vt_symbol].values()))
         if diff_pos:
             self.execute_trade(vt_symbol, diff_pos, tick)
-        self.target_data_diff[vt_symbol]: dict[str,int] = defaultdict(int)
+        self.target_data_diff[vt_symbol] = defaultdict(int)
 
 
     def execute_trade(self, vt_symbol: str, volume: int, tick: TickData) -> None:
@@ -319,8 +298,6 @@ class StrategyEngine(BaseEngine):
             price = tick.ask_price_1  # 默认对手价
             if tick.ask_volume_1 >= tick.bid_volume_1 * 20:  # prone to decline
                 price = tick.last_price
-            # else:
-            #     price = tick.ask_price_1
             if current_pos < 0:
                 if target_pos <= 0:
                     self.cover(vt_symbol, price, volume=order_volume, lock=lock_flag)
@@ -332,17 +309,14 @@ class StrategyEngine(BaseEngine):
                     self.write_log(f"buy {vt_symbol} @ price = {price: g} with tick.last_price = {tick.last_price: g} and volume =  {target_pos}, lock = {lock_flag}")
             else:
                 self.buy(vt_symbol, price, order_volume, lock=lock_flag)
-                self.write_log(f"buy {vt_symbol} @ price = {price: g} with tick.last_price = {tick.last_price: g} and volume =  {order_volume},lock = {lock_flag}")
+                self.write_log(f"buy {vt_symbol} @ price = {price: g} with tick.last_price = {tick.last_price: g} and volume =  {order_volume}, lock = {lock_flag}")
         elif order_volume < 0:  # short
             price = tick.bid_price_1  # 默认对手价
             if tick.bid_volume_1 >= tick.ask_volume_1 * 20:  # prone to climb
                 price = tick.last_price
-            # else:
-            #     # price = tick.last_price + self.price_add * self.get_pricetick(vt_symbol)
-            #     price = tick.last_price
 
             if current_pos > 0:
-                if target_pos>= 0:
+                if target_pos >= 0:
                     self.sell(vt_symbol, price, abs(order_volume), lock=lock_flag)
                     self.write_log(f"sell {vt_symbol} @ price = {price: g} with tick.last_price = {tick.last_price: g} and volume =  {abs(order_volume)}, lock = {lock_flag}")
                 elif target_pos < 0:
@@ -370,12 +344,15 @@ class StrategyEngine(BaseEngine):
         for vt_orderid in self.to_be_cancelled_orders.copy():
             if vt_orderid:
                 order = self.get_order(vt_orderid=vt_orderid)  # 最新状态
-                if order.status == Status.CANCELLED and order.vt_symbol == tick.vt_symbol:
+                if order and order.status == Status.CANCELLED and order.vt_symbol == tick.vt_symbol:
                     self.write_log(f"order cancelled successfully:{order}")
+                    pricetick = self.get_pricetick(tick.vt_symbol)
+                    if pricetick is None:
+                        pricetick = 0.0
                     if order.direction == Direction.LONG:
-                        new_price = tick.last_price + self.get_pricetick(tick.vt_symbol) * self.price_add
+                        new_price = tick.last_price + pricetick * self.price_add
                     else:
-                        new_price = tick.last_price - self.get_pricetick(tick.vt_symbol) * self.price_add
+                        new_price = tick.last_price - pricetick * self.price_add
 
                     symbol = tick.vt_symbol.split('.')[0]
                     instrument = re.sub('\\d', '', symbol).upper()
@@ -418,7 +395,7 @@ class StrategyEngine(BaseEngine):
         volume: float,
         lock: bool,
         net: bool,
-    ) -> list:
+    ) -> list[str]:
         """发送委托"""
         contract: ContractData | None = self.main_engine.get_contract(vt_symbol)
         if not contract:
@@ -506,7 +483,7 @@ class StrategyEngine(BaseEngine):
 
     def load_bars(self, strategy: StrategyTemplate, days: int, interval: Interval) -> None:
         """加载历史数据"""
-        vt_symbols: list = strategy.vt_symbols
+        vt_symbols: list[str] = strategy.vt_symbols
         dts_set: set[datetime] = set()
         history_data: dict[tuple, BarData] = {}
 
@@ -584,7 +561,7 @@ class StrategyEngine(BaseEngine):
         return data
 
     def call_strategy_func(
-        self, strategy: StrategyTemplate, func: Callable, params: object = None
+        self, strategy: StrategyTemplate, func: Callable, params: object | None = None
     ) -> None:
         """安全调用策略函数"""
         try:
@@ -649,11 +626,11 @@ class StrategyEngine(BaseEngine):
                     continue
 
                 # 对于持仓和目标数据字典，需要使用dict.update更新defaultdict
-                if name in {"pos_data", "target_data"}:
-                    strategy_data = getattr(strategy, name)
-                    strategy_data.update(value)
-                if isinstance(value,dict):
-                    strategy_data = getattr(strategy, name)
+                # if name in {"pos_data", "target_data"}:
+                #     strategy_data = getattr(strategy, name)
+                #     strategy_data.update(value)
+                if isinstance(value, dict):
+                    strategy_data: dict = getattr(strategy, name)
                     strategy_data.update(value)
                 # 对于其他int/float/str/bool字段则可以直接赋值
                 else:
@@ -731,10 +708,6 @@ class StrategyEngine(BaseEngine):
         for vt_symbol in strategy.vt_symbols:
             strategies: list = self.symbol_strategy_map[vt_symbol]
             strategies.remove(strategy)
-
-        for vt_orderid in strategy.active_orderids:
-            if vt_orderid in self.orderid_strategy_map:
-                self.orderid_strategy_map.pop(vt_orderid)
 
         self.strategies.pop(strategy_name)
         self.save_strategy_setting()
@@ -923,7 +896,7 @@ class StrategyEngine(BaseEngine):
         if not order.is_active() and order.vt_orderid in self.active_orderids:
             self.active_orderids.remove(order.vt_orderid)
 
-    def get_order(self, vt_orderid: str) -> Optional[OrderData]:
+    def get_order(self, vt_orderid: str) -> OrderData | None:
         """查询委托数据"""
         return self.orders.get(vt_orderid, None)
 
